@@ -28,8 +28,24 @@ public class LidarrClient
     public Task<RequestResult> AddAlbumByMbidAsync(string releaseGroupMbid, CancellationToken ct) =>
         AddAlbumAsync(releaseGroupMbid, freeText: null, expectedArtist: null, expectedAlbum: null, ct);
 
-    public Task<RequestResult> AddAlbumByTextAsync(string artist, string album, CancellationToken ct) =>
-        AddAlbumAsync(matchMbid: null, freeText: $"{artist} {album}".Trim(), expectedArtist: artist, expectedAlbum: album, ct);
+    public async Task<RequestResult> AddAlbumByTextAsync(string artist, string album, CancellationToken ct)
+    {
+        try
+        {
+            return await AddAlbumAsync(matchMbid: null, freeText: $"{artist} {album}".Trim(),
+                expectedArtist: artist, expectedAlbum: album, ct).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex)
+        {
+            _log.LogWarning(ex, "Temporary Lidarr request failure for {Artist} - {Album}", artist, album);
+            return RequestResult.Retry("Lidarr is temporarily unavailable; queued for retry.");
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _log.LogWarning("Lidarr request timed out for {Artist} - {Album}", artist, album);
+            return RequestResult.Retry("Lidarr timed out; queued for retry.");
+        }
+    }
 
     private async Task<RequestResult> AddAlbumAsync(string? matchMbid, string? freeText, string? expectedArtist, string? expectedAlbum, CancellationToken ct)
     {
@@ -464,7 +480,12 @@ public class LidarrClient
             var albumTitle = e.TryGetProperty("title", out var t) ? t.GetString() : null;
             if (string.IsNullOrEmpty(artistName) || string.IsNullOrEmpty(albumTitle)) { idx++; continue; }
 
-            if (!AlbumTitlesEquivalent(expectedAlbum, albumTitle)) { idx++; continue; }
+            if (!AlbumTitlesEquivalent(expectedAlbum, albumTitle)
+                && !AlbumTitlesEquivalent(RemoveLeadingArtist(expectedAlbum, expectedArtist), albumTitle))
+            {
+                idx++;
+                continue;
+            }
 
             var aN = NormalizeName(artistName);
             var aE = NormalizeName(expectedArtist);
@@ -500,6 +521,14 @@ public class LidarrClient
         return sb.ToString();
     }
 
+    private static string RemoveLeadingArtist(string album, string artist)
+    {
+        var pattern = @"^\s*" + System.Text.RegularExpressions.Regex.Escape(artist)
+            + @"\s*[-–—:']*\s*";
+        return System.Text.RegularExpressions.Regex.Replace(album, pattern, string.Empty,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
     // Album-title qualifier words. When comparing two titles token-wise,
     // these are removed from both sides before equality check, so e.g.
     // "California (Deluxe Edition)" matches "California" (with no risk of
@@ -510,7 +539,7 @@ public class LidarrClient
         {
             "deluxe", "edition", "version", "bonus", "remastered", "remaster",
             "expanded", "anniversary", "reissue", "live", "acoustic", "special",
-            "explicit", "clean", "extended", "complete",
+            "explicit", "clean", "extended", "complete", "single", "ep",
             // Soundtrack markers — different MB releases use different conventions.
             "original", "motion", "picture", "soundtrack", "ost", "score",
             "from", "the",
@@ -572,8 +601,10 @@ public class LidarrClient
     public class RequestResult
     {
         public bool Success { get; init; }
+        public bool Retryable { get; init; }
         public string Message { get; init; } = string.Empty;
         public static RequestResult Ok(string msg) => new() { Success = true, Message = msg };
         public static RequestResult Fail(string msg) => new() { Success = false, Message = msg };
+        public static RequestResult Retry(string msg) => new() { Success = false, Retryable = true, Message = msg };
     }
 }

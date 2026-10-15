@@ -8,9 +8,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
-    <Version>0.1.0.0</Version>
-    <AssemblyVersion>0.1.0.0</AssemblyVersion>
-    <FileVersion>0.1.0.0</FileVersion>
+    <Version>0.1.0.14</Version>
+    <AssemblyVersion>0.1.0.14</AssemblyVersion>
+    <FileVersion>0.1.0.14</FileVersion>
     <!-- Privacy: don't bake the host's absolute build path into the
          compiled DLL. By default .NET emits a PDB-reference path like
          "/Users/<you>/.../obj/Release/net9.0/JellyMusicDiscovery.pdb"
@@ -34,9 +34,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Jellyfin.Common" Version="10.11.2" />
-    <PackageReference Include="Jellyfin.Controller" Version="10.11.2" />
-    <PackageReference Include="Jellyfin.Model" Version="10.11.2" />
+    <PackageReference Include="Jellyfin.Common" Version="10.11.11" />
+    <PackageReference Include="Jellyfin.Controller" Version="10.11.11" />
+    <PackageReference Include="Jellyfin.Model" Version="10.11.11" />
     <!-- Read audio tags (artist/album/track) from completed slskd downloads
          so the post-download organizer can move files to the right
          {Artist}/{Album} folder in the music library. -->

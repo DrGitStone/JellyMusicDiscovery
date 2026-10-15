@@ -5,7 +5,7 @@
   "overview": "Adds a discovery layer to Jellyfin's music library. Search results for content you don't yet own appear inline alongside library items. Album requests trigger Lidarr; track plays stream on demand from slskd.",
   "owner": "self-hosted",
   "category": "Metadata",
-  "version": "0.1.0.0",
+  "version": "0.1.0.14",
   "targetAbi": "10.11.0.0",
   "framework": "net9.0",
   "assemblies": ["JellyMusicDiscovery.dll"],

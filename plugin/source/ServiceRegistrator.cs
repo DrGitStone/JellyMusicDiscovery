@@ -35,6 +35,7 @@ public class ServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<DiscoveryManager>();
         services.AddSingleton<StreamSessionRegistry>();
         services.AddSingleton<DiscoveryItemCache>();
+        services.AddSingleton<PlaylistImportService>();
         services.AddSingleton<IMediaSourceProvider, DiscoveryMediaSourceProvider>();
 
         services.Configure<MvcOptions>(opts =>

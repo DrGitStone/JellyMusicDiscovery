@@ -149,6 +149,20 @@ proper instead of a discovery hit.
   move/rename + Jellyfin rescan trigger. Significantly more setup
   than the other features — see "Install order" below.
 
+### 7. Import playlists and request missing albums
+Administrators can upload Apple Music text exports, Spotify CSV files,
+M3U, or M3U8 files from **Dashboard → Plugins → Music Discovery**.
+The importer previews exact matches, creates or updates a private native
+Jellyfin playlist for the selected user, and can request each missing
+album through Lidarr. It never guesses when multiple library tracks
+match.
+
+Imports are saved without credentials and reconciled every 15 minutes.
+After Lidarr, Soularr, and slskd add an album and Jellyfin scans it, the
+new tracks are inserted into the playlist in the source order. Reimporting
+the same playlist name updates it instead of creating duplicates. Album
+requests are limited to 50 per import.
+
   **I look forward to the open-source evolution of this project and the wonderful future contributions from the community**
 ---
 
@@ -218,7 +232,7 @@ gotchas (Lidarr `UMASK=000`, the Soularr version-check patch, etc.).
 ### Jellyfin
 - **Server version: 10.11.x.** The plugin's `meta.json` declares
   `targetAbi=10.11.0.0` and the source is built against the
-  `Jellyfin.Common/Controller/Model 10.11.2` packages. It will load on
+  `Jellyfin.Common/Controller/Model 10.11.11` packages. It will load on
   any 10.11.x. **It will NOT load on 10.10 or earlier** — Jellyfin's
   plugin ABI changed. If you need a 10.10 build, you'd have to
   rebuild against the older NuGet packages and adjust the API

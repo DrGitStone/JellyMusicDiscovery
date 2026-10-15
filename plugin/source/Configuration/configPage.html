@@ -121,6 +121,46 @@
           <span>Save</span>
         </button>
       </form>
+
+      <h2>Import playlist</h2>
+      <form id="PlaylistImportForm">
+        <div class="inputContainer">
+          <label class="inputLabel" for="PlaylistFile">Apple Music text, Spotify CSV, M3U or M3U8</label>
+          <input is="emby-input" type="file" id="PlaylistFile" accept=".txt,.csv,.m3u,.m3u8" multiple required />
+        </div>
+        <div class="selectContainer">
+          <label class="selectLabel" for="PlaylistUser">Owner</label>
+          <select is="emby-select" id="PlaylistUser" required></select>
+        </div>
+        <div class="inputContainer">
+          <label class="inputLabel" for="PlaylistName">Playlist name</label>
+          <input is="emby-input" type="text" id="PlaylistName" maxlength="120" placeholder="Defaults to the uploaded filename" />
+          <div class="fieldDescription">A custom name can only be used when one file is selected.</div>
+        </div>
+        <div class="checkboxContainer">
+          <label>
+            <input is="emby-checkbox" type="checkbox" id="RequestMissingAlbums" checked />
+            <span>Request full albums for unmatched tracks</span>
+          </label>
+        </div>
+        <button is="emby-button" type="button" id="PreviewPlaylist" class="raised"><span>Preview</span></button>
+        <button is="emby-button" type="submit" id="ImportPlaylist" class="raised button-submit"><span>Import</span></button>
+        <button is="emby-button" type="button" id="ReconcilePlaylists" class="raised"><span>Reconcile saved imports</span></button>
+      </form>
+      <div id="PlaylistImportProgress" hidden aria-live="polite" style="margin-top:1.5em">
+        <div id="PlaylistImportStatus" class="fieldDescription"></div>
+        <div id="PlaylistProgressRows"></div>
+      </div>
+      <div id="PlaylistImportResult" aria-live="polite" style="margin-top:1.5em"></div>
+      <div id="PlaylistReportActions" hidden style="margin-top:1em">
+        <button is="emby-button" type="button" id="CopyPlaylistReport" class="raised">
+          <span>Copy report</span>
+        </button>
+        <button is="emby-button" type="button" id="DownloadPlaylistReport" class="raised">
+          <span>Download report</span>
+        </button>
+        <span id="PlaylistReportStatus" class="fieldDescription" aria-live="polite"></span>
+      </div>
     </div>
   </div>
 
@@ -139,6 +179,8 @@
   ];
 
   const page = document.querySelector('#MusicDiscoveryConfigPage');
+  let playlistBusy = false;
+  let shareableReport = '';
 
   function load(cfg) {
     fields.forEach(f => {
@@ -163,9 +205,258 @@
     return cfg;
   }
 
+  async function decodeResponse(response) {
+    if (!response || typeof response.text !== 'function') return response;
+    const text = await response.text();
+    let body = text;
+    try { body = text ? JSON.parse(text) : null; } catch (_) { }
+    if (!response.ok) {
+      const detail = body && (body.detail || body.title) || text || response.statusText;
+      throw new Error('HTTP ' + response.status + ': ' + detail);
+    }
+    return body;
+  }
+
+  async function request(path, options) {
+    try {
+      return await decodeResponse(await ApiClient.ajax(
+        Object.assign({ url: ApiClient.getUrl(path) }, options)));
+    } catch (error) {
+      if (error && typeof error.text === 'function') return decodeResponse(error);
+      throw error;
+    }
+  }
+
+  async function upload(path, form) {
+    const headers = {};
+    ApiClient.setRequestHeaders(headers);
+    return decodeResponse(await fetch(ApiClient.getUrl(path), {
+      method: 'POST',
+      headers: headers,
+      body: form,
+      credentials: 'same-origin'
+    }));
+  }
+
+  function showImportResult(value) {
+    page.querySelector('#PlaylistImportResult').textContent = typeof value === 'string'
+      ? value : JSON.stringify(value, null, 2);
+    setShareableReport('');
+  }
+
+  function setShareableReport(report) {
+    shareableReport = report;
+    page.querySelector('#PlaylistReportActions').hidden = !report;
+    page.querySelector('#PlaylistReportStatus').textContent = '';
+  }
+
+  function setPlaylistBusy(busy, message) {
+    playlistBusy = busy;
+    ['PlaylistFile', 'PlaylistUser', 'PlaylistName', 'RequestMissingAlbums',
+      'PreviewPlaylist', 'ImportPlaylist', 'ReconcilePlaylists'].forEach(id => {
+        page.querySelector('#' + id).disabled = busy;
+      });
+    if (busy) page.querySelector('#PlaylistImportProgress').hidden = false;
+    page.querySelector('#PlaylistImportStatus').textContent = message;
+  }
+
+  function renderProgressRows(files) {
+    const rows = page.querySelector('#PlaylistProgressRows');
+    rows.replaceChildren(...files.map((file, index) => {
+      const row = document.createElement('div');
+      row.style.marginTop = '1em';
+      const label = document.createElement('div');
+      label.style.display = 'flex';
+      label.style.justifyContent = 'space-between';
+      const name = document.createElement('span');
+      name.textContent = file.name;
+      const state = document.createElement('span');
+      state.id = 'PlaylistProgressState' + index;
+      state.textContent = 'Queued · 0%';
+      const progress = document.createElement('progress');
+      progress.id = 'PlaylistProgressBar' + index;
+      progress.max = 100;
+      progress.value = 0;
+      progress.style.width = '100%';
+      label.append(name, state);
+      row.append(label, progress);
+      return row;
+    }));
+  }
+
+  function updateProgress(index, percent, state) {
+    page.querySelector('#PlaylistProgressBar' + index).value = percent;
+    page.querySelector('#PlaylistProgressState' + index).textContent = state + ' · ' + percent + '%';
+  }
+
+  function runPlaylistAction(message, action) {
+    if (playlistBusy) return;
+    renderProgressRows([{ name: message }]);
+    setPlaylistBusy(true, message);
+    showImportResult('');
+    updateProgress(0, 10, 'Processing');
+    Promise.resolve().then(action)
+      .then(result => {
+        updateProgress(0, 100, 'Complete');
+        if (Array.isArray(result)) {
+          renderBatchResults(result.map(item => {
+            const preview = item.preview || item.Preview || {};
+            return { file: preview.playlistName || preview.PlaylistName || 'Imported playlist', result: item };
+          }), true);
+        } else showImportResult(result);
+      })
+      .catch(error => { updateProgress(0, 100, 'Failed'); showImportResult(error.message || error); })
+      .finally(() => setPlaylistBusy(false, 'Finished'));
+  }
+
+  function playlistForm(file, includeSettings, playlistName) {
+    const data = new FormData();
+    data.append('file', file, file.name);
+    if (includeSettings) {
+      data.append('userId', page.querySelector('#PlaylistUser').value);
+      data.append('playlistName', playlistName);
+      data.append('requestMissingAlbums', page.querySelector('#RequestMissingAlbums').checked);
+    }
+    return data;
+  }
+
+  function trackLabel(track) {
+    return [track.artist ?? track.Artist, track.title ?? track.Title, track.album ?? track.Album]
+      .filter(Boolean).join(' — ');
+  }
+
+  function reportTrackLabel(track) {
+    return (track.artist ?? track.Artist ?? 'Unknown artist') + ' - ' +
+      (track.title ?? track.Title ?? 'Unknown title') + ' | Album: ' +
+      (track.album ?? track.Album ?? 'Unknown album');
+  }
+
+  function addTrackDetails(parent, label, tracks, open) {
+    const details = document.createElement('details');
+    details.style.marginTop = '0.75em';
+    details.open = open;
+    const summary = document.createElement('summary');
+    summary.style.cursor = 'pointer';
+    summary.style.fontWeight = '600';
+    summary.textContent = label + ' (' + tracks.length + ')';
+    const list = document.createElement('ul');
+    tracks.forEach(track => {
+      const item = document.createElement('li');
+      item.textContent = trackLabel(track) +
+        ((track.ambiguous ?? track.Ambiguous) ? ' — ambiguous match' : '');
+      list.append(item);
+    });
+    details.append(summary, list);
+    parent.append(details);
+  }
+
+  function renderBatchResults(results, imported) {
+    const container = page.querySelector('#PlaylistImportResult');
+    const reportSections = [];
+    const sections = results.map(entry => {
+      const section = document.createElement('section');
+      section.style.padding = '1em 0';
+      section.style.borderBottom = '1px solid rgba(255,255,255,.15)';
+      const heading = document.createElement('h3');
+      heading.textContent = entry.file;
+      section.append(heading);
+      if (entry.error) {
+        const error = document.createElement('p');
+        error.textContent = 'Import failed: ' + entry.error;
+        section.append(error);
+        return section;
+      }
+
+      const result = entry.result || {};
+      const preview = result.preview || result.Preview || result;
+      const status = document.createElement('p');
+      status.textContent = (imported ? 'Added now: ' : 'Already available: ') +
+        (preview.matched ?? preview.Matched ?? 0) + ' / ' +
+        (preview.total ?? preview.Total ?? 0) + ' tracks';
+      section.append(status);
+
+      const requests = result.albumRequests || result.AlbumRequests || [];
+      if (imported) {
+        const queued = result.queuedTracks || result.QueuedTracks || [];
+        const manual = result.manualTracks || result.ManualTracks || [];
+        const requestStatus = document.createElement('p');
+        requestStatus.textContent = 'Albums accepted this run: ' +
+          requests.filter(item => item.success ?? item.Success).length +
+          '. Album requests remaining: ' + (result.pendingAlbums ?? result.PendingAlbums ?? 0) + '.';
+        section.append(requestStatus);
+        addTrackDetails(section, 'Queued for download — will be added to playlist', queued, false);
+        addTrackDetails(section, 'Not found — manual action required', manual, manual.length > 0);
+        if (manual.length) {
+          reportSections.push('PLAYLIST: ' + entry.file + '\n' + manual.map(track =>
+            '- ' + reportTrackLabel(track) + ' | Reason: ' +
+            ((track.ambiguous ?? track.Ambiguous)
+              ? 'multiple local matches'
+              : 'no automatic album match')).join('\n'));
+        }
+      } else {
+        addTrackDetails(section, 'Not currently available', preview.missing || preview.Missing || [], false);
+      }
+      return section;
+    });
+    container.replaceChildren(...sections);
+    setShareableReport(reportSections.length
+      ? 'Tracks requiring manual action\n\n' + reportSections.join('\n\n') + '\n'
+      : '');
+  }
+
+  async function runPlaylistBatch(includeSettings) {
+    if (playlistBusy) return;
+    const files = Array.from(page.querySelector('#PlaylistFile').files);
+    if (!files.length) { showImportResult('Choose at least one playlist file.'); return; }
+    const customName = page.querySelector('#PlaylistName').value.trim();
+    if (files.length > 1 && customName) {
+      showImportResult('Clear the custom playlist name before importing multiple files.');
+      return;
+    }
+
+    renderProgressRows(files);
+    setPlaylistBusy(true, (includeSettings ? 'Importing' : 'Previewing') +
+      ' 0 of ' + files.length + ' playlists');
+    showImportResult('');
+    const results = [];
+    for (let index = 0; index < files.length; index++) {
+      const file = files[index];
+      page.querySelector('#PlaylistImportStatus').textContent =
+        (includeSettings ? 'Importing' : 'Previewing') + ' ' + (index + 1) +
+        ' of ' + files.length + ': ' + file.name;
+      updateProgress(index, 10, 'Uploading');
+      const processingTimer = setTimeout(() => updateProgress(index, 25, 'Processing'), 500);
+      try {
+        const form = playlistForm(file, includeSettings, customName);
+        const result = await upload(
+          'mdiscover/playlists/' + (includeSettings ? 'import' : 'preview'), form);
+        clearTimeout(processingTimer);
+        updateProgress(index, 100, 'Complete');
+        results.push({ file: file.name, result });
+      } catch (error) {
+        clearTimeout(processingTimer);
+        updateProgress(index, 100, 'Failed');
+        results.push({ file: file.name, error: error.message || String(error) });
+      }
+    }
+    renderBatchResults(results, includeSettings);
+    setPlaylistBusy(false, 'Finished ' + files.length + ' playlist' + (files.length === 1 ? '' : 's'));
+  }
+
   page.addEventListener('pageshow', function () {
     Dashboard.showLoadingMsg();
-    ApiClient.getPluginConfiguration(PluginId).then(load).finally(Dashboard.hideLoadingMsg);
+    Promise.all([
+      ApiClient.getPluginConfiguration(PluginId).then(load),
+      ApiClient.getUsers().then(users => {
+        const select = page.querySelector('#PlaylistUser');
+        select.replaceChildren(...users.map(user => {
+          const option = document.createElement('option');
+          option.value = user.Id;
+          option.textContent = user.Name;
+          return option;
+        }));
+      })
+    ]).catch(error => showImportResult(error.message || error)).finally(Dashboard.hideLoadingMsg);
   });
 
   page.querySelector('#MusicDiscoveryConfigForm').addEventListener('submit', function (e) {
@@ -176,6 +467,51 @@
       return ApiClient.updatePluginConfiguration(PluginId, cfg);
     }).then(Dashboard.processPluginConfigurationUpdateResult).finally(Dashboard.hideLoadingMsg);
     return false;
+  });
+
+  page.querySelector('#PreviewPlaylist').addEventListener('click', function () {
+    runPlaylistBatch(false);
+  });
+
+  page.querySelector('#PlaylistImportForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    runPlaylistBatch(true);
+  });
+
+  page.querySelector('#ReconcilePlaylists').addEventListener('click', function () {
+    runPlaylistAction('Reconciling saved playlists...', () =>
+      request('mdiscover/playlists/reconcile', { type: 'POST' }));
+  });
+
+  page.querySelector('#CopyPlaylistReport').addEventListener('click', async function () {
+    if (!shareableReport) return;
+    const status = page.querySelector('#PlaylistReportStatus');
+    try {
+      await navigator.clipboard.writeText(shareableReport);
+      status.textContent = 'Copied';
+    } catch (_) {
+      const area = document.createElement('textarea');
+      area.value = shareableReport;
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.append(area);
+      area.select();
+      status.textContent = document.execCommand('copy') ? 'Copied' : 'Copy failed';
+      area.remove();
+    }
+  });
+
+  page.querySelector('#DownloadPlaylistReport').addEventListener('click', function () {
+    if (!shareableReport) return;
+    const url = URL.createObjectURL(new Blob([shareableReport], { type: 'text/plain;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'playlist-tracks-requiring-manual-action.txt';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    page.querySelector('#PlaylistReportStatus').textContent = 'Downloaded';
   });
 })();
 </script>
