@@ -272,9 +272,9 @@ public class MusicItemDetailActionFilter : IAsyncActionFilter, IAsyncResultFilte
             //      → web client EXPECTS a 302 redirect to a direct-stream URL.
             //        Returning bytes directly here makes web's audio element
             //        spin forever (it's waiting for the redirect that never
-            //        comes). Reply 302 → /Audio/{id}/main.mp3.
+            //        comes). Reply 302 → /Audio/{id}/stream.mp3.
             //
-            //   2. /Audio/{id}/main.mp3 (or /stream, /File, /Download, etc.)
+            //   2. /Audio/{id}/stream.mp3 (or /stream, /File, /Download, etc.)
             //      → return audio bytes proxied from ytmusic-stream-server.
             //
             // Native clients (Finer iOS) just hit /Items/{id}/File directly
@@ -318,7 +318,7 @@ public class MusicItemDetailActionFilter : IAsyncActionFilter, IAsyncResultFilte
                 // Honour the same /universal contract the YT path does:
                 // when the web client hits /Audio/{id}/universal without
                 // EnableRedirection=true, it expects audio BYTES, not a
-                // 302. We bounce to /main.mp3 first; on the next call
+                // 302. We bounce to /stream.mp3 first; on the next call
                 // (which lands in this same branch) we 302 to the upstream.
                 if (!string.IsNullOrEmpty(aEntry.RadioStreamUrl))
                 {
@@ -361,7 +361,7 @@ public class MusicItemDetailActionFilter : IAsyncActionFilter, IAsyncResultFilte
 
                     if (wantsRedirect)
                     {
-                        var redirTarget = $"/Audio/{aId:N}/main.mp3";
+                        var redirTarget = $"/Audio/{aId:N}/stream.mp3";
                         // Forward the api_key so the redirect target stays auth'd.
                         if (ctx.HttpContext.Request.Query.TryGetValue("ApiKey", out var ak)
                             || ctx.HttpContext.Request.Query.TryGetValue("api_key", out ak))
